@@ -8,6 +8,8 @@
 #include <string>
 #include <fstream>
 #include <tuple>
+#include <mutex>
+#include <thread>
 #include <map>
 #include "cache.hh"
 #include "evictor.hh"
@@ -20,21 +22,27 @@
 */
 
 // CONSTANTS
-int WORKLOAD_REQUEST_COUNT = 50000;
-int NREQ_COUNT = 50000;
-int CACHE_SIZE = 1024;
-int GETPROB = 67;
-int SETPROB = 98;   // SETPROB is 100 <-> (desired prob). It's the top of the range.
+const int WORKLOAD_REQUEST_COUNT = 10000;
+const int NREQ_COUNT = 10000;
+const int NTHREAD = 3;
+const int CACHE_SIZE = 1024;
+const int GETPROB = 67;
+const int SETPROB = 98;   // SETPROB is 100 <-> (desired prob). It's the top of the range.
                     // Don't need a DELPROB, it's just in an else statement.
-std::string HOST = "127.0.0.1";
-std::string PORT = "3618";
+const std::string HOST = "127.0.0.1";
+const std::string PORT = "3618";
+
+std::mutex key_mutex;
+std::mutex get_mutex;
+std::mutex time_mutex;
+std::mutex duration_vector_mutex;
 
 // Global Variables
-double total_gets = 0.;     // Effectively an int, but typing for division later.
+std::vector<std::string> keys_in_use;
+std::vector<double> request_durations;
+double total_gets = 0;          //Effectively an int, but typed for division purposes.
 int get_hits = 0;
 
-std::vector<std::string> keys_in_use;
-std::vector<int> key_touch_count;
 
 
 //-------------------------------------------------------------Cache Calling Functions------------------------------------------------//
@@ -255,7 +263,9 @@ generate_request()
             //      created during warmup are length 10. This is a debugging tool to
             //      distinguish different key origins.
             set_key = generate_random_key(8);
+            key_mutex.lock();
             keys_in_use.push_back(set_key);
+            key_mutex.unlock();
         }
 
         random_request.push_back(set_key);
@@ -298,7 +308,6 @@ cache_warmup(Cache& items) {
 
             size_of_data_generated += data_length;
             keys_in_use.push_back(new_key);
-            key_touch_count.push_back(1);
         }
         else {
             key_type key = select_key_get();
@@ -320,7 +329,7 @@ make_text_file( std::map<double, int>& timings )
     // Records these values in a .dat file to be used in a histogram/scatter plot
 
     std::ofstream outfile ("timing_data.dat");
-    for (auto i : timings){
+    for (auto i : timings) {
         outfile << i.first << "\t" << i.second << std::endl;
     }
     outfile.close();
@@ -348,16 +357,20 @@ baseline_performance(std::map<double, int>& times_map, double avg_time)
 
 //-----------------------------------------------------------------Latency test-------------------------------------------------------//
 
-std::vector<double>
-baseline_latencies(Cache& items, int nreq, double& total_time) 
+void
+baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, int>& times_map)
 {
     // Returns a vector of latency times, one per request
     // Takes a reference variable that records the total latency time across all requests
         // (used to later calculate mean time per request)
 
     std::cout << "Beginning latency test\n";
+
+    // total_gets and get_hits are now totals for individual threads.
+    //double total_gets = 0.;
+    //int get_hits = 0;
     std::vector<double> nreq_timings;
-    std::map<double, int> times_map;
+
     for (int i = 0; i < nreq; i++) {
 
         std::vector<std::variant<std::string, int>> new_req = generate_request();
@@ -389,10 +402,14 @@ baseline_latencies(Cache& items, int nreq, double& total_time)
             get_result = items.get(key, val_size);
             stop = std::chrono::high_resolution_clock::now();
 
+            get_mutex.lock();
+
             total_gets += 1;
             if (get_result != nullptr) {
                 get_hits += 1;
             }
+
+            get_mutex.unlock();
             
         }
         else if (std::get<std::string>(new_req[0]) == "delete") {
@@ -414,8 +431,12 @@ baseline_latencies(Cache& items, int nreq, double& total_time)
         int time_cutoff = static_cast<int>(time_raw * 100 + .5);
         double time = static_cast<double>(time_cutoff) / 100;
         // std::cout << time << "\n";
-        total_time += time;
         nreq_timings.push_back(time);
+
+        //Mutex locking for output parameter modification (which are monotonically increasing)
+        time_mutex.lock();
+
+        total_time += time;
 
         auto find_key = times_map.find(time);
         if (find_key == times_map.end()) {
@@ -424,15 +445,15 @@ baseline_latencies(Cache& items, int nreq, double& total_time)
         else {
             times_map [find_key->first] += 1;
         }
+
+        time_mutex.unlock();
         
     }
-    make_text_file(times_map);
 
-    double avg_time = total_time / NREQ_COUNT;
-    std::tuple<double, double> performance_stats = baseline_performance(times_map, avg_time);
-    std::cout << "95th% latency: " << std::get<0>(performance_stats) << "\n";
-    std::cout << "Reqs per second: " << std::get<1>(performance_stats) << "\n";
-    return nreq_timings;
+    //When the thread finishes, append its results to the global results list
+    duration_vector_mutex.lock();
+    request_durations.insert(request_durations.end(), nreq_timings.begin(), nreq_timings.end());
+    duration_vector_mutex.unlock();
 }
 
 //------------------------------------------------------------------MAIN--------------------------------------------------------------//
@@ -460,7 +481,10 @@ int main(int argc, char** argv)
     Cache items(HOST, PORT);
     std::cout << "Beginning request generation!\n";
     cache_warmup(items);
+
     if (std::string(argv[1]) == "work") {
+        std::cout << "Currently commented out; try \"measure\".\n";
+        /*
         for (int i = 0; i < WORKLOAD_REQUEST_COUNT; i++) {
 
             std::vector<std::variant<std::string, int>> new_req = generate_request();
@@ -488,12 +512,41 @@ int main(int argc, char** argv)
                 cache_del(items, key);
             }
         }
+        */
     }
+
+    //---------------------------------------------------------Multithreading Stuff---------------------------------------------------//
+
     else if (std::string(argv[1]) == "measure") {
         double total_time = 0.;
-        std::vector<double> latency_times = baseline_latencies(items, NREQ_COUNT, total_time);
-        double avg_time = total_time / latency_times.size();
+        std::map<double, int> times_map;
+        std::vector<std::thread> thread_vector;
+
+        // auto thread_lambda = [&items, &total_time, &times_map]()
+        //  {baseline_latencies(items, NREQ_COUNT, total_time, times_map);};
+
+        //Threading start
+        for (int i = 0; i < NTHREAD; i++) {
+
+            thread_vector.emplace_back(std::thread(
+                baseline_latencies, std::ref(items), NREQ_COUNT, std::ref(total_time), std::ref(times_map)));
+            //std::vector<double> latency_times = baseline_latencies(items, NREQ_COUNT, total_time);
+        }
+        //Join threads
+        
+        for (int i = 0; i < NTHREAD; i++) {
+            thread_vector[i].join();
+        }
+        
+        //Threading end
+        thread_vector.clear();
+        make_text_file(times_map);  //Create output text file
+        double avg_time = total_time / request_durations.size();
+        std::tuple<double, double> performance_stats = baseline_performance(times_map, avg_time);
+        std::cout << "95th% latency: " << std::get<0>(performance_stats) << "\n";
+        std::cout << "Reqs per second: " << std::get<1>(performance_stats) << "\n";
         std::cout << "Average time per request: (Comparison) " << avg_time << "\n";
+        std::cout << "Handled " << NTHREAD << " threads...\n";
     }
     else {
         std::cout << "No parameters given!\n";
