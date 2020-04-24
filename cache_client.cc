@@ -23,20 +23,20 @@ public:
     std::string host_;
     std::string port_;
 
-    net::io_context& ioc_;
-    tcp::resolver& resolver_;
-    beast::tcp_stream& stream_;
+    net::io_context ioc_;
+    tcp::resolver resolver_;
+    mutable beast::tcp_stream stream_;
     boost::asio::ip::basic_resolver_results<tcp>  results_;
 
     unsigned HTTPVersion_ = 11;
     std::string get_val_;
 
-    Impl(std::string host, std::string port, net::io_context& ioc, tcp::resolver& resolver, beast::tcp_stream& stream):
+    Impl(std::string host, std::string port):
         host_(host),
         port_(port),
-        ioc_(ioc),
-        resolver_(resolver),
-        stream_(stream)
+        ioc_(),
+        resolver_(ioc_),
+        stream_(ioc_)
     {
         results_ = resolver_.resolve(host_, port_);
         stream_.connect(results_);
@@ -295,13 +295,9 @@ public:
 };
 
 
-Cache::Cache(std::string host, std::string port) {
-    net::io_context ioc;
-    tcp::resolver resolver(ioc);
-    beast::tcp_stream stream(ioc);
-
-    Impl cache_Impl(host, port, ioc, resolver, stream);
-    pImpl_ = (std::make_unique<Impl>(cache_Impl));
+Cache::Cache(std::string host, std::string port):
+pImpl_(new Impl(host, port))
+{
     std::cout << "Cache constructed\n";
 }
 
