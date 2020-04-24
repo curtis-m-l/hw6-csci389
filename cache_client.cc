@@ -22,15 +22,24 @@ class Cache::Impl {
 public:
     std::string host_;
     std::string port_;
+
+    net::io_context& ioc_;
+    tcp::resolver& resolver_;
+    beast::tcp_stream& stream_;
+    boost::asio::ip::basic_resolver_results<tcp>  results_;
+
     unsigned HTTPVersion_ = 11;
     std::string get_val_;
-    //beast::tcp_stream* stream_ ;
-    //boost::asio::ip::basic_resolver_results<tcp>  results_;
 
-    Impl(std::string host, std::string port){
-        host_ = host;
-        port_ = port;
-        return;
+    Impl(std::string host, std::string port, net::io_context& ioc, tcp::resolver& resolver, beast::tcp_stream& stream):
+        host_(host),
+        port_(port),
+        ioc_(ioc),
+        resolver_(resolver),
+        stream_(stream)
+    {
+        results_ = resolver_.resolve(host_, port_);
+        stream_.connect(results_);
     }
 
     ~Impl() {
@@ -49,11 +58,13 @@ public:
         //std::cout << "\nBeginning set request...\n";
 
         //Set up a new ioc and stream
+        /*
         net::io_context ioc;
         tcp::resolver resolver(ioc);
         auto const results_ = resolver.resolve(host_, port_);
         beast::tcp_stream stream_(ioc);
         stream_.connect(results_);
+        */
 
         //std::cout << "\n" << key << "\n";
         //std::cout << val << "\n";
@@ -94,11 +105,13 @@ public:
         std::cout << "\nBeginning get request...\n";
 
         //Set up a new ioc
+        /*
         net::io_context ioc;
         tcp::resolver resolver(ioc);
         auto const results_ = resolver.resolve(host_, port_);
         beast::tcp_stream stream_(ioc);
         stream_.connect(results_);
+        */
 
         // Set up an HTTP GET request message
         std::string requestBody = "/" + key;
@@ -150,11 +163,13 @@ public:
         std::cout << "\nBeginning del request...\n";
 
         //Set up a new ioc
+        /*
         net::io_context ioc;
         tcp::resolver resolver(ioc);
         auto const results_ = resolver.resolve(host_, port_);
         beast::tcp_stream stream_(ioc);
         stream_.connect(results_);
+        */
 
         // Set up an HTTP DELETE request message
         std::string requestBody = "/" + key;
@@ -196,11 +211,14 @@ public:
         std::cout << "\nBeginning space_used request...\n";
 
         //Set up a new ioc
+        /*
         net::io_context ioc;
         tcp::resolver resolver(ioc);
         auto const results_ = resolver.resolve(host_, port_);
         beast::tcp_stream stream_(ioc);
         stream_.connect(results_);
+        */
+
         //Print is new
         std::cout << "Generating request...\n";
         // Set up an HTTP HEAD request message
@@ -242,11 +260,13 @@ public:
         std::cout << "\nBeginning a reset request...\n";
 
         //Set up a new ioc
+        /*
         net::io_context ioc;
         tcp::resolver resolver(ioc);
         auto const results_ = resolver.resolve(host_, port_);
         beast::tcp_stream stream_(ioc);
         stream_.connect(results_);
+        */
 
         // NOTE: Reset still uses 'target' as its request body, so it'll likely fail a lot of the time
         // Set up an HTTP POST request message
@@ -276,8 +296,11 @@ public:
 
 
 Cache::Cache(std::string host, std::string port) {
+    net::io_context ioc;
+    tcp::resolver resolver(ioc);
+    beast::tcp_stream stream(ioc);
 
-    Impl cache_Impl(host, port);
+    Impl cache_Impl(host, port, ioc, resolver, stream);
     pImpl_ = (std::make_unique<Impl>(cache_Impl));
     std::cout << "Cache constructed\n";
 }
