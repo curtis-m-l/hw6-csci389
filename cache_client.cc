@@ -1,5 +1,6 @@
 //Includes and some code: https://www.boost.org/doc/libs/1_72_0/libs/beast/example/http/client/sync/http_client_sync.cpp
 
+#define BOOST_ASIO_NO_DEPRECATED
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
@@ -9,6 +10,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <thread>
+#include <mutex>
 #include <iostream>
 #include "cache.hh"
 
@@ -17,24 +20,51 @@ namespace http = beast::http;       // from <boost/beast/http.hpp>
 namespace net = boost::asio;        // from <boost/asio.hpp>
 using tcp = net::ip::tcp;           // from <boost/asio/ip/tcp.hpp>
 
+std::mutex comm_mutex;
+
 class Cache::Impl {
 
 public:
     std::string host_;
     std::string port_;
-    unsigned HTTPVersion_ = 11;
-    std::string get_val_;
-    //beast::tcp_stream* stream_ ;
-    //boost::asio::ip::basic_resolver_results<tcp>  results_;
 
-    Impl(std::string host, std::string port){
-        host_ = host;
-        port_ = port;
-        return;
+    net::io_context ioc_;
+    tcp::resolver resolver_;
+    mutable beast::tcp_stream stream_;
+    boost::asio::ip::basic_resolver_results<tcp>  results_;
+
+    unsigned HTTPVersion_ = 11;
+    std::vector<std::thread> thread_vector_;
+    std::string get_val_;
+
+    Impl(std::string host, std::string port):
+        host_(host),
+        port_(port),
+        ioc_(),
+        resolver_(ioc_),
+        stream_(ioc_)
+    {
+        results_ = resolver_.resolve(host_, port_);
+        stream_.connect(results_);
+
+        // Run the I/O service on the requested number of threads
+        /*
+        thread_vector_.reserve(NTHREADS - 1);
+        for (auto i = NTHREADS - 1; i > 0; --i)
+            thread_vector_.emplace_back(
+                [&ioc_]
+                {
+                    ioc_.run();
+                });
+        ioc_.run();
+        */
     }
 
     ~Impl() {
         std::cout << "Cache deconstructed\n";
+
+        beast::error_code ec;
+        stream_.socket().shutdown(tcp::socket::shutdown_both, ec);
         // The following check was suggested, but did not work,
         // so our deconstructor is merely a notice.
         /*
@@ -48,13 +78,6 @@ public:
 
         //std::cout << "\nBeginning set request...\n";
 
-        //Set up a new ioc and stream
-        net::io_context ioc;
-        tcp::resolver resolver(ioc);
-        auto const results_ = resolver.resolve(host_, port_);
-        beast::tcp_stream stream_(ioc);
-        stream_.connect(results_);
-
         //std::cout << "\n" << key << "\n";
         //std::cout << val << "\n";
         //std::cout << size << "\n";
@@ -65,13 +88,13 @@ public:
         http::request<http::string_body> req{ http::verb::put, requestBody, HTTPVersion_ };
         req.set(http::field::host, host_);
         req.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
-        // *Changed:
+
         req.set(http::field::content_type, "text/plain");
         req.body() = requestBody;
         //std::cout << "Attempted request body: " << req.body() << "\n\n";
 
         req.prepare_payload();
-        // *End of changes
+
         // Send the HTTP request to the remote host
         http::write(stream_, req);
 
@@ -83,22 +106,11 @@ public:
 
         // Receive the HTTP response
         http::read(stream_, buffer, res);
-
-        // Gracefully close the connection
-        beast::error_code ec;
-        stream_.socket().shutdown(tcp::socket::shutdown_both, ec);
     }
 
     val_type get(key_type key, size_type& val_size) {
 
-        std::cout << "\nBeginning get request...\n";
-
-        //Set up a new ioc
-        net::io_context ioc;
-        tcp::resolver resolver(ioc);
-        auto const results_ = resolver.resolve(host_, port_);
-        beast::tcp_stream stream_(ioc);
-        stream_.connect(results_);
+        //std::cout << "\nBeginning get request...\n";
 
         // Set up an HTTP GET request message
         std::string requestBody = "/" + key;
@@ -123,13 +135,9 @@ public:
         // Receive the HTTP response
         http::read(stream_, buffer, res);
 
-        // Gracefully close the connection
-        beast::error_code ec;
-        stream_.socket().shutdown(tcp::socket::shutdown_both, ec);
-
         std::vector<std::string> splitBody;
         //std::cout << "The client asked: " << requestBody << "\n";
-        std::cout << "The server returned: " << res.body() << "\n";
+        //std::cout << "The server returned: " << res.body() << "\n";
         boost::split(splitBody, res.body(), boost::is_any_of(",:"));
         if (splitBody[0] == "NULL") {
             return nullptr;
@@ -138,7 +146,7 @@ public:
         get_val_ = splitBody[3].substr(2, splitBody[3].size() - 3); // Changed
         //std::cout << "Made it past the first substr, which held: " << get_val_ << "\n";
 
-        val_type val = get_val_.c_str();  // "1000"
+        val_type val = get_val_.c_str();  // Example: "1000"
         //std::cout << "val: " << val << "\n";
         std::string val_size_string = splitBody[5].substr(2, splitBody[5].size() - 3); // Changed
         //std::cout << "val_size_string = " << val_size_string << "\n";
@@ -147,14 +155,7 @@ public:
     }
 
     bool del (key_type key) {
-        std::cout << "\nBeginning del request...\n";
-
-        //Set up a new ioc
-        net::io_context ioc;
-        tcp::resolver resolver(ioc);
-        auto const results_ = resolver.resolve(host_, port_);
-        beast::tcp_stream stream_(ioc);
-        stream_.connect(results_);
+        //std::cout << "\nBeginning del request...\n";
 
         // Set up an HTTP DELETE request message
         std::string requestBody = "/" + key;
@@ -179,10 +180,6 @@ public:
         // Receive the HTTP response
         http::read(stream_, buffer, res);
 
-        // Gracefully close the connection
-        beast::error_code ec;
-        stream_.socket().shutdown(tcp::socket::shutdown_both, ec);
-
         std::string result = res.body();
         bool answer = true;
         if (result == "False") {
@@ -193,14 +190,8 @@ public:
 
     size_type space_used() {
         
-        std::cout << "\nBeginning space_used request...\n";
+        //std::cout << "\nBeginning space_used request...\n";
 
-        //Set up a new ioc
-        net::io_context ioc;
-        tcp::resolver resolver(ioc);
-        auto const results_ = resolver.resolve(host_, port_);
-        beast::tcp_stream stream_(ioc);
-        stream_.connect(results_);
         //Print is new
         std::cout << "Generating request...\n";
         // Set up an HTTP HEAD request message
@@ -224,10 +215,6 @@ public:
         // Receive the HTTP response
         http::read(stream_, buffer, res);
 
-        // Gracefully close the connection
-        beast::error_code ec;
-        stream_.socket().shutdown(tcp::socket::shutdown_both, ec);
-
         //Print is new
         std::cout << "Before string conversion: " << res["Space-Used"] << "\n";
         std::string space_used_string = res["Space-Used"].data();
@@ -240,13 +227,6 @@ public:
     void reset() {
 
         std::cout << "\nBeginning a reset request...\n";
-
-        //Set up a new ioc
-        net::io_context ioc;
-        tcp::resolver resolver(ioc);
-        auto const results_ = resolver.resolve(host_, port_);
-        beast::tcp_stream stream_(ioc);
-        stream_.connect(results_);
 
         // NOTE: Reset still uses 'target' as its request body, so it'll likely fail a lot of the time
         // Set up an HTTP POST request message
@@ -268,17 +248,13 @@ public:
 
         // Receive the HTTP response
         http::read(stream_, buffer, res);
-
-        beast::error_code ec;
-        stream_.socket().shutdown(tcp::socket::shutdown_both, ec);
     }
 };
 
 
-Cache::Cache(std::string host, std::string port) {
-
-    Impl cache_Impl(host, port);
-    pImpl_ = (std::make_unique<Impl>(cache_Impl));
+Cache::Cache(std::string host, std::string port):
+pImpl_(new Impl(host, port))
+{
     std::cout << "Cache constructed\n";
 }
 

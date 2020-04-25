@@ -14,6 +14,9 @@
 #include "cache.hh"
 #include "evictor.hh"
 
+//Source: https://en.cppreference.com/w/cpp/chrono/treat_as_floating_point
+using FpMilliseconds = std::chrono::duration<float, std::chrono::milliseconds::period>;
+
 /*
   Created by: Maxx Curtis and Casey Harris, for 
   CSCI 389 HW #5: 'Lies, Benchmarks, and Statistics'
@@ -22,9 +25,9 @@
 */
 
 // CONSTANTS
-const int WORKLOAD_REQUEST_COUNT = 10000;
-const int NREQ_COUNT = 10000;
-const int NTHREAD = 3;
+//const int WORKLOAD_REQUEST_COUNT = 10000;         //Used for workload, which isn't currently present.
+const int NTHREAD = 7;
+const int NREQ_COUNT = 100000 / NTHREAD;             //Integer division is fine
 const int CACHE_SIZE = 1024;
 const int GETPROB = 67;
 const int SETPROB = 98;   // SETPROB is 100 <-> (desired prob). It's the top of the range.
@@ -66,10 +69,10 @@ cache_get(Cache& items, key_type key)
     Cache::val_type got_item = items.get(key, got_item_size);
     if (got_item != nullptr) {
         get_hits += 1;
-        std::cout << key << " gotten successfully\n";
+        //std::cout << key << " gotten successfully\n";
     }
     else {
-        std::cout << "Falied to get " << key << "\n";
+        //std::cout << "Falied to get " << key << "\n";
         // TODO: Simulate backend server refilling cache?
     }
 }
@@ -358,8 +361,9 @@ baseline_performance(std::map<double, int>& times_map, double avg_time)
 //-----------------------------------------------------------------Latency test-------------------------------------------------------//
 
 void
-baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, int>& times_map)
+baseline_latencies(int nreq, double& total_time, std::map<double, int>& times_map)
 {
+    Cache items(HOST, PORT);
     // Returns a vector of latency times, one per request
     // Takes a reference variable that records the total latency time across all requests
         // (used to later calculate mean time per request)
@@ -369,6 +373,7 @@ baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, 
     // total_gets and get_hits are now totals for individual threads.
     //double total_gets = 0.;
     //int get_hits = 0;
+
     std::vector<double> nreq_timings;
 
     for (int i = 0; i < nreq; i++) {
@@ -379,7 +384,6 @@ baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, 
         auto stop = std::chrono::high_resolution_clock::now();
 
         if (std::get<std::string>(new_req[0]) == "set") {
-            assert(new_req.size() == 4 && "'set' request generated with the wrong number of elements!\n");
             // Vector contents: {"set", key_type key, val_type data, size_type size}
             Cache::val_type data = std::get<std::string>(new_req[1]).c_str();
             key_type key = std::get<std::string>(new_req[2]);
@@ -391,7 +395,6 @@ baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, 
 
         }
         else if (std::get<std::string>(new_req[0]) == "get") {
-            assert(new_req.size() == 2 && "'get' request generated with the wrong number of elements!\n");
             // Vector contents: {"get", key_type key}
 
             key_type key = std::get<std::string>(new_req[1]);
@@ -413,7 +416,6 @@ baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, 
             
         }
         else if (std::get<std::string>(new_req[0]) == "delete") {
-            assert(new_req.size() == 2 && "'del' request generated with the wrong number of elements!\n");
             // Vector contents: {"get", key_type key}
 
             key_type key = std::get<std::string>(new_req[1]);
@@ -423,12 +425,9 @@ baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, 
             stop = std::chrono::high_resolution_clock::now();
         }
 
-        //Source: https://en.cppreference.com/w/cpp/chrono/treat_as_floating_point
-        using FpMilliseconds = std::chrono::duration<float, std::chrono::milliseconds::period>;
         // Note that implicit conversion is allowed here
-        auto f_ms = FpMilliseconds(stop - start);
-        double time_raw = f_ms.count();
-        int time_cutoff = static_cast<int>(time_raw * 100 + .5);
+		auto time_raw = FpMilliseconds(stop - start).count();
+		int time_cutoff = static_cast<int>(time_raw * 100 + .5);
         double time = static_cast<double>(time_cutoff) / 100;
         // std::cout << time << "\n";
         nreq_timings.push_back(time);
@@ -454,12 +453,17 @@ baseline_latencies(Cache& items, int nreq, double& total_time, std::map<double, 
     duration_vector_mutex.lock();
     request_durations.insert(request_durations.end(), nreq_timings.begin(), nreq_timings.end());
     duration_vector_mutex.unlock();
+
+	items.~Cache();
 }
 
 //------------------------------------------------------------------MAIN--------------------------------------------------------------//
 
 int main(int argc, char** argv)
 {
+    Cache disposable_cache(HOST, PORT); //Used exclusively for warmup
+    cache_warmup(disposable_cache);
+    disposable_cache.~Cache();
     /*
         Main takes a single parameter, which determines what kind of test the program runs
 
@@ -478,9 +482,7 @@ int main(int argc, char** argv)
     }
 
     srand (time(NULL));
-    Cache items(HOST, PORT);
     std::cout << "Beginning request generation!\n";
-    cache_warmup(items);
 
     if (std::string(argv[1]) == "work") {
         std::cout << "Currently commented out; try \"measure\".\n";
@@ -524,12 +526,13 @@ int main(int argc, char** argv)
 
         // auto thread_lambda = [&items, &total_time, &times_map]()
         //  {baseline_latencies(items, NREQ_COUNT, total_time, times_map);};
-
+        auto start = std::chrono::high_resolution_clock::now();
+        
         //Threading start
         for (int i = 0; i < NTHREAD; i++) {
 
             thread_vector.emplace_back(std::thread(
-                baseline_latencies, std::ref(items), NREQ_COUNT, std::ref(total_time), std::ref(times_map)));
+                baseline_latencies, NREQ_COUNT, std::ref(total_time), std::ref(times_map)));
             //std::vector<double> latency_times = baseline_latencies(items, NREQ_COUNT, total_time);
         }
         //Join threads
@@ -537,11 +540,15 @@ int main(int argc, char** argv)
         for (int i = 0; i < NTHREAD; i++) {
             thread_vector[i].join();
         }
+
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time = FpMilliseconds(stop - start).count();
         
         //Threading end
         thread_vector.clear();
         make_text_file(times_map);  //Create output text file
-        double avg_time = total_time / request_durations.size();
+		std::cout << "Total time taken: " << total_time << "\n";
+		double avg_time = total_time / (NREQ_COUNT * NTHREAD);
         std::tuple<double, double> performance_stats = baseline_performance(times_map, avg_time);
         std::cout << "95th% latency: " << std::get<0>(performance_stats) << "\n";
         std::cout << "Reqs per second: " << std::get<1>(performance_stats) << "\n";

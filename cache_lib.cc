@@ -28,7 +28,6 @@ public:
 
   void set(key_type key, val_type val, size_type size) {
     // If data is larger than cache capacity
-    std::cout << "Doing a set!\n";
     if (size > m_maxmem) {
       std::cout << "It don't fit.\n"; 
       return;
@@ -39,11 +38,9 @@ public:
     if (existing_value != m_cache_vals.end()) {
       actual_size = size - m_cache_sizes.find(key)->second;
     }
-    std::cout << "Val: " << val << "\n";
     assert (val != NULL && "String was null :/ \n");
 
     std::string val_string(val);
-    std::cout << "Made it out!\n";
     // If it fits, add it to the cache 
     if (m_current_mem + actual_size <= m_maxmem) {
 
@@ -106,11 +103,7 @@ public:
         m_evictor->touch_key(key);
     }
     get_val_ = toRe->second;
-    //std::cout << "get_val_: " << get_val_ << "\n";
     val_size = m_cache_sizes.find(key)->second;
-    //std::cout << "val_size: " << val_size << "\n";
-    //std::cout << "After conversion: " << static_cast<val_type>(get_val_.c_str()) << "\n";
-    std::cout << "Made it to get return!\n";
     return static_cast<val_type>(get_val_.c_str());
   }
 
@@ -139,20 +132,20 @@ public:
 };
 
 Cache::Cache(size_type maxmem,
-  float max_load_factor,
-  Evictor* evictor,
-  hash_func hasher) {
-  Impl cache_Impl;
-  pImpl_ = (std::make_unique<Impl>(cache_Impl));
-  pImpl_->m_maxmem = maxmem;
-  pImpl_->m_evictor = evictor;
-  pImpl_->m_current_mem = 0;
-  std::unordered_map<key_type, std::string, hash_func> cache_vals(0, hasher);
-  std::unordered_map<key_type, size_type, hash_func> cache_sizes(0, hasher);
-  cache_vals.max_load_factor(max_load_factor);
-  cache_sizes.max_load_factor(max_load_factor);
-  pImpl_->m_cache_vals = cache_vals;
-  pImpl_->m_cache_sizes = cache_sizes;
+    float max_load_factor,
+    Evictor* evictor,
+    hash_func hasher) :
+    pImpl_(new Impl())
+{
+	pImpl_->m_maxmem = maxmem;
+	pImpl_->m_evictor = evictor;
+	pImpl_->m_current_mem = 0;
+	std::unordered_map<key_type, std::string, hash_func> cache_vals(0, hasher);
+    std::unordered_map<key_type, size_type, hash_func> cache_sizes(0, hasher);
+    cache_vals.max_load_factor(max_load_factor);
+    cache_sizes.max_load_factor(max_load_factor);
+    pImpl_->m_cache_vals = cache_vals;
+    pImpl_->m_cache_sizes = cache_sizes;
 }
 
 void Cache::set(key_type key, val_type val, size_type size) { pImpl_->set(key, val, size); }
@@ -160,4 +153,4 @@ Cache::val_type Cache::get(key_type key, size_type& val_size) const { return pIm
 bool Cache::del(key_type key) { return pImpl_->del(key); }
 Cache::size_type Cache::space_used() const { return pImpl_->space_used(); }
 void Cache::reset() { pImpl_->reset(); }
-Cache::~Cache() { pImpl_->reset(); }
+Cache::~Cache() { pImpl_.reset(); }

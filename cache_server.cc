@@ -1,4 +1,5 @@
-//Reference: https://www.boost.org/doc/libs/1_72_0/libs/beast/doc/html/index.html
+// Reference: https://www.boost.org/doc/libs/1_72_0/libs/beast/doc/html/index.html
+// FFR: To download all necessary boost libraries, use 'sudo apt-get install libboost-all-dev'
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -17,14 +18,17 @@
 #include <thread>
 #include <vector>
 #include <sstream>
+#include <mutex>
 #include "cache.hh"
-#include "LRU_Evictor.hh"
+#include "lru_evictor.hh"
 
 namespace beast = boost::beast;         // from <boost/beast.hpp>
 namespace http = beast::http;           // from <boost/beast/http.hpp>
 namespace net = boost::asio;            // from <boost/asio.hpp>
 namespace po = boost::program_options;
 using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
+
+std::mutex cache_mutex;
 
 //------------------------------------------------------------------------------
 
@@ -66,7 +70,7 @@ template<
         // Respond to HEAD request
     if (req.method() == http::verb::head)
     {
-        std::cout << "\nHandling a HEAD request...\n";
+        std::cout << "Handling a HEAD request...\n";
         http::response<http::empty_body> res { http::status::ok, req.version() };
         res.insert("Space-Used", std::to_string(serverCache->space_used()));
         res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
@@ -81,14 +85,16 @@ template<
 
     // Respond to GET /k request
     if (req.method() == http::verb::get) {
-        std::cout << "\nHandling a GET request...\n";
+        std::cout << "Handling a GET request...\n";
         // http://www.martinbroadhurst.com/how-to-split-a-string-in-c.html, method 5
         std::vector<std::string> splitBody;
         boost::split(splitBody, req.body(), boost::is_any_of("/")); // Uses body now
         assert(splitBody.size() == 2 && "splitBody was the wrong size (get)\n");
         //
         Cache::size_type val_size;
+        cache_mutex.lock();
         Cache::val_type result = serverCache->get(splitBody[1], val_size);
+        cache_mutex.unlock();
         //std::cout << "Server thinks the key is: " << splitBody[1] << "\n";
         //std::cout << "Server thinks the data is: " << result << "\n";
         //std::cout << "Server thinks the val size is: " << val_size << "\n";
@@ -119,28 +125,30 @@ template<
 
     // Respond to PUT /k/v/s request
     if (req.method() == http::verb::put) {
-        std::cout << "\nHandling a PUT request...\n";
+        std::cout << "Handling a PUT request...\n";
         // http://www.martinbroadhurst.com/how-to-split-a-string-in-c.html, method 5
         std::vector<std::string> splitBody;
-        std::cout << "The server recieved this set request: " << req.body() << "\n";
+        // std::cout << "The server recieved this set request: " << req.body() << "\n";
         boost::split(splitBody, req.body(), boost::is_any_of("/")); // Uses body now
         assert(splitBody.size() == 4 && "splitBody was the wrong size (put)\n");
         Cache::size_type size;
-        std::cout << "Before conversion: " << splitBody[3] << "\n";
+        // std::cout << "Before conversion: " << splitBody[3] << "\n";
         std::stringstream ss(splitBody[3]);
         ss >> size;
         Cache::val_type val = splitBody[2].c_str();
-        std::cout << "Key: " << splitBody[1] << "\n";
-        std::cout << "Value: " << val << "\n";
-        std::cout << "Size: " << size << "\n";
+        // std::cout << "Key: " << splitBody[1] << "\n";
+        // std::cout << "Value: " << val << "\n";
+        // std::cout << "Size: " << size << "\n";
+        cache_mutex.lock();
         serverCache->set(splitBody[1], val, size);
+        cache_mutex.unlock();
 
         // Test:
         Cache::size_type gotten_size;
-        std::cout << "Testing get in set function!\n";
+        // std::cout << "Testing get in set function!\n";
         std::string gotten_data( serverCache->get(splitBody[1], gotten_size) );
-        //std::cout << "Got data! " << gotten_data << "\n";
-        //std::cout << "Got size! " << gotten_size << "\n";
+        std::cout << "Got data! " << gotten_data << "\n";
+        std::cout << "Got size! " << gotten_size << "\n";
         assert(gotten_data == splitBody[2].c_str() && gotten_size == size && "Set was bad!\n");
          
         http::response<http::empty_body> res{ http::status::ok, req.version() };
@@ -152,13 +160,15 @@ template<
 
     // Respond to DELETE /k request
     if (req.method() == http::verb::delete_) {
-        std::cout << "\nHandling a DELETE request...\n";
+        std::cout << "Handling a DEL request...\n";
         // http://www.martinbroadhurst.com/how-to-split-a-string-in-c.html, method 5
         std::vector<std::string> splitBody;
         boost::split(splitBody, req.body(), boost::is_any_of("/"));
         assert(splitBody.size() == 2 && "splitBody was the wrong size (put)\n");
         //
+        cache_mutex.lock();
         bool answer = serverCache->del(splitBody[1]);
+        cache_mutex.unlock();
         http::response<http::string_body> res{ http::status::ok, req.version() };
         res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
         //Computer is unhappy with boolean concatenation.
@@ -180,7 +190,7 @@ template<
 
     // Respond to POST /reset request. POST /"anything else" should fail.
     if (req.method() == http::verb::post) {
-        std::cout << "\nHandling a POST request...\n";
+        std::cout << "Handling a POST request...\n";
         // http://www.martinbroadhurst.com/how-to-split-a-string-in-c.html, method 5
         std::vector<std::string> splitBody;
         boost::split(splitBody, req.body(), boost::is_any_of("/"));
@@ -188,7 +198,9 @@ template<
         http::response<http::empty_body> res{ http::status::ok, req.version() };
         assert(splitBody.size() == 2 && "splitBody was the wrong size (put)\n");
         if (splitBody[1] == "reset") {
+            cache_mutex.lock();
             serverCache->reset();
+            cache_mutex.unlock();
             assert(serverCache->space_used() == 0 && "Reset failed!\n");
         }
         else {
@@ -457,7 +469,7 @@ int main(int argc, char** argv) {
         ("-s", po::value<std::string>()->default_value("127.0.0.1"), "define host server (default 127.0.0.1)")
         ("-p", po::value<unsigned short>()->default_value(3618), "define port number (default 3618)")
         ("-t", po::value<int>()->default_value(1), "define thread count (default 1)")
-        ("-m", po::value<Cache::size_type>()->default_value(10), "set maxmem (default 10)");
+        ("-m", po::value<Cache::size_type>()->default_value(1024), "set maxmem (default 10)");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
