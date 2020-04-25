@@ -143,13 +143,17 @@ template<
         serverCache->set(splitBody[1], val, size);
         cache_mutex.unlock();
 
+        /*
         // Test:
         Cache::size_type gotten_size;
         // std::cout << "Testing get in set function!\n";
+        cache_mutex.lock();
         std::string gotten_data( serverCache->get(splitBody[1], gotten_size) );
+        cache_mutex.unlock();
         std::cout << "Got data! " << gotten_data << "\n";
         std::cout << "Got size! " << gotten_size << "\n";
         assert(gotten_data == splitBody[2].c_str() && gotten_size == size && "Set was bad!\n");
+        */
          
         http::response<http::empty_body> res{ http::status::ok, req.version() };
         res.set(http::field::server, BOOST_BEAST_VERSION_STRING);

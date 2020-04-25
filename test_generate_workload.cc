@@ -26,7 +26,7 @@ using FpMilliseconds = std::chrono::duration<float, std::chrono::milliseconds::p
 
 // CONSTANTS
 //const int WORKLOAD_REQUEST_COUNT = 10000;         //Used for workload, which isn't currently present.
-const int NTHREAD = 7;
+const int NTHREAD = 4;
 const int NREQ_COUNT = 100000 / NTHREAD;             //Integer division is fine
 const int CACHE_SIZE = 1024;
 const int GETPROB = 67;

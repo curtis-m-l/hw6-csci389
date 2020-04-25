@@ -10,8 +10,6 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
-#include <thread>
-#include <mutex>
 #include <iostream>
 #include "cache.hh"
 
@@ -19,8 +17,6 @@ namespace beast = boost::beast;     // from <boost/beast.hpp>
 namespace http = beast::http;       // from <boost/beast/http.hpp>
 namespace net = boost::asio;        // from <boost/asio.hpp>
 using tcp = net::ip::tcp;           // from <boost/asio/ip/tcp.hpp>
-
-std::mutex comm_mutex;
 
 class Cache::Impl {
 
@@ -34,7 +30,6 @@ public:
     boost::asio::ip::basic_resolver_results<tcp>  results_;
 
     unsigned HTTPVersion_ = 11;
-    std::vector<std::thread> thread_vector_;
     std::string get_val_;
 
     Impl(std::string host, std::string port):
@@ -46,18 +41,6 @@ public:
     {
         results_ = resolver_.resolve(host_, port_);
         stream_.connect(results_);
-
-        // Run the I/O service on the requested number of threads
-        /*
-        thread_vector_.reserve(NTHREADS - 1);
-        for (auto i = NTHREADS - 1; i > 0; --i)
-            thread_vector_.emplace_back(
-                [&ioc_]
-                {
-                    ioc_.run();
-                });
-        ioc_.run();
-        */
     }
 
     ~Impl() {
