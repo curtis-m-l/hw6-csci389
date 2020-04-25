@@ -59,6 +59,9 @@ are more clients making simultaneous requests.
 every time it was much higher than any of the others. We're not sure if this is due
 to actual causes or just random variation.
 
+![](client_throughput.png)
+![](client_latency.png)
+
 ## Part 2: Multithreaded Server
 
 - Since we used Beast for this project, the server already had most of a multithreading
@@ -83,3 +86,6 @@ threads = 3 and threads = 7. I don't think that increasing the server thread cou
 affected the highest end of request times all that much, since those requests might
 be bottlenecked by other factors (like retrieving the data from the computer's actual
 memory).
+
+![](server_throughput.png)
+![](server_latency.png)
